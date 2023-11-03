@@ -33,6 +33,7 @@ pub struct TaskControlBlock {
     pub syscall_times: [u32; MAX_SYSCALL_NUM],
     /// The first execute time(ms) of this task
     pub first_execute_time: usize,
+    pub is_started: bool,
 }
 
 impl TaskControlBlock {
@@ -70,6 +71,7 @@ impl TaskControlBlock {
             program_brk: user_sp,
             syscall_times: [0; MAX_SYSCALL_NUM],
             first_execute_time: 0,
+            is_started: false,
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();

@@ -95,16 +95,15 @@ pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
         return -1;
     } 
     let mut map_permission = MapPermission::U;
-    if port & 0x1 == 1{
+    if port & 0b1 != 0{
         map_permission.insert(MapPermission::R);
     }
-    if port & 0x2 == 1{
+    if port & 0b10 != 0{
         map_permission.insert(MapPermission::W);
     }
-    if port & 0x4 == 1{
+    if port & 0b100 != 0{
         map_permission.insert(MapPermission::X);
     }     
-
     if len == 0 {
         return 0;
     }
@@ -114,7 +113,7 @@ pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
         .memory_set
         .insert_framed_area(
             start.into(),
-            (start + len - 1).into(),
+            (start + len).into(),
             map_permission,
         );
     if result.is_err() {
@@ -136,7 +135,7 @@ pub fn sys_munmap(start: usize, len: usize) -> isize {
     let task_manager = get_task_manager();
     let result = task_manager.inner.exclusive_access().tasks[current_task]
         .memory_set
-        .unmap_area(start.into(), (start + len - 1).into());
+        .unmap_area(start.into(), (start + len).into());
     if result.is_err() {
         return -1;
     }
