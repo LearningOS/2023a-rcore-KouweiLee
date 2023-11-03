@@ -1,11 +1,11 @@
 //! Types related to task management
 use super::TaskContext;
+use crate::config::MAX_SYSCALL_NUM;
 use crate::config::TRAP_CONTEXT_BASE;
 use crate::mm::{
     kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,
 };
 use crate::trap::{trap_handler, TrapContext};
-
 /// The task control block (TCB) of a task.
 pub struct TaskControlBlock {
     /// Save task context
@@ -18,6 +18,7 @@ pub struct TaskControlBlock {
     pub memory_set: MemorySet,
 
     /// The phys page number of trap context
+    /// Trap context用于用户态和内核态的上下文保存，而task context则用于任务切换时的保存
     pub trap_cx_ppn: PhysPageNum,
 
     /// The size(top addr) of program which is loaded from elf file
@@ -28,6 +29,10 @@ pub struct TaskControlBlock {
 
     /// Program break
     pub program_brk: usize,
+    /// The called times of each syscall
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+    /// The first execute time(ms) of this task
+    pub first_execute_time: usize,
 }
 
 impl TaskControlBlock {
@@ -54,7 +59,7 @@ impl TaskControlBlock {
             kernel_stack_bottom.into(),
             kernel_stack_top.into(),
             MapPermission::R | MapPermission::W,
-        );
+        ).unwrap();
         let task_control_block = Self {
             task_status,
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
@@ -63,6 +68,8 @@ impl TaskControlBlock {
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+            syscall_times: [0; MAX_SYSCALL_NUM],
+            first_execute_time: 0,
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();

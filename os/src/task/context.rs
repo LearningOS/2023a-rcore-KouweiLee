@@ -2,7 +2,7 @@
 use crate::trap::trap_return;
 
 #[repr(C)]
-/// task context structure containing some registers
+/// task context 保存的是任务切换时的上下文信息
 pub struct TaskContext {
     /// Ret position after task switching
     ra: usize,

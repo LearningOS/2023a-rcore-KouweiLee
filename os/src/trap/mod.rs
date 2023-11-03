@@ -56,11 +56,11 @@ pub fn enable_timer_interrupt() {
 /// trap handler
 #[no_mangle]
 pub fn trap_handler() -> ! {
-    set_kernel_trap_entry();
+    set_kernel_trap_entry(); // 设置从S态到S态的trap机制
     let cx = current_trap_cx();
     let scause = scause::read(); // get trap cause
     let stval = stval::read(); // get extra value
-    // trace!("into {:?}", scause.cause());
+                               // trace!("into {:?}", scause.cause());
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
             // jump to next instruction anyway
@@ -112,7 +112,7 @@ pub fn trap_return() -> ! {
     // trace!("[kernel] trap_return: ..before return");
     unsafe {
         asm!(
-            "fence.i",
+            "fence.i", // 清空指令缓存，内核可能对用户地址空间的指令段进行了修改
             "jr {restore_va}",         // jump to new addr of __restore asm function
             restore_va = in(reg) restore_va,
             in("a0") trap_cx_ptr,      // a0 = virt addr of Trap Context
