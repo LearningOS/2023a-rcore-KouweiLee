@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 use crate::{
     config::MAX_SYSCALL_NUM,
     loader::get_app_data_by_name,
-    mm::{translated_refmut, translated_str},
+    mm::{translated_refmut, translated_str, VirtAddr, MapPermission},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next, TaskStatus,
@@ -140,22 +140,63 @@ pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
     -1
 }
 
-/// YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+// YOUR JOB: Implement mmap.
+pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
+    trace!("kernel: sys_mmap");
+    if VirtAddr::from(start).page_offset() != 0 {
+        // error!("start is not aligned");
+        return -1;
+    }
+    if port & !0x7 != 0 || port & 0x7 == 0 {
+        // error!("port is error");
+        return -1;
+    } 
+    let mut map_permission = MapPermission::U;
+    if port & 0b1 != 0{
+        map_permission.insert(MapPermission::R);
+    }
+    if port & 0b10 != 0{
+        map_permission.insert(MapPermission::W);
+    }
+    if port & 0b100 != 0{
+        map_permission.insert(MapPermission::X);
+    }     
+    if len == 0 {
+        return 0;
+    }
+    let result = current_task()
+        .unwrap()
+        .inner_exclusive_access()
+        .memory_set
+        .insert_framed_area(
+            start.into(),
+            (start + len).into(),
+            map_permission,
+        );
+    if result.is_err() {
+        return -1;
+    }
+    0
 }
 
-/// YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+// YOUR JOB: Implement munmap.
+pub fn sys_munmap(start: usize, len: usize) -> isize {
+    trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
+    if VirtAddr::from(start).page_offset() != 0 {
+        return -1;
+    }
+    if len == 0 {
+        return 0;
+    }
+    let current_task = get_current_task_id();
+    let task_manager = get_task_manager();
+    let result = task_manager.inner.exclusive_access().tasks[current_task]
+        .memory_set
+        .unmap_area(start.into(), (start + len).into());
+    if result.is_err() {
+        return -1;
+    }
+    0
 }
 
 /// change data segment size
