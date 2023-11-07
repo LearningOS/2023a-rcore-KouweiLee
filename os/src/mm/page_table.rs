@@ -189,6 +189,7 @@ pub fn translated_str(token: usize, ptr: *const u8) -> String {
     let mut string = String::new();
     let mut va = ptr as usize;
     loop {
+        // 必须逐字节，因为ptr可能是跨物理页面的
         let ch: u8 = *(page_table
             .translate_va(VirtAddr::from(va))
             .unwrap()

@@ -109,7 +109,7 @@ impl TaskControlBlock {
             inner: unsafe {
                 UPSafeCell::new(TaskControlBlockInner {
                     trap_cx_ppn,
-                    base_size: user_sp,
+                    base_size: user_sp, // 用户栈栈顶
                     task_cx: TaskContext::goto_trap_return(kernel_stack_top),
                     task_status: TaskStatus::Ready,
                     memory_set,
@@ -145,7 +145,7 @@ impl TaskControlBlock {
         // **** access current TCB exclusively
         let mut inner = self.inner_exclusive_access();
         // substitute memory_set
-        inner.memory_set = memory_set;
+        inner.memory_set = memory_set; // 原来的memory_set会被自动回收
         // update trap_cx ppn
         inner.trap_cx_ppn = trap_cx_ppn;
         // initialize base_size

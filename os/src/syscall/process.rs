@@ -78,6 +78,8 @@ pub fn sys_exec(path: *const u8) -> isize {
 
 /// If there is not a child process whose pid is same as given, return -1.
 /// Else if there is a child process but it is still running, return -2.
+// pid: 要等待的子进程pid，如果为-1,则表示任意一个子进程
+// 该函数立即返回
 pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
     trace!("kernel::pid[{}] sys_waitpid [{}]", current_task().unwrap().pid.0, pid);
     let task = current_task().unwrap();
@@ -106,9 +108,11 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
         // ++++ temporarily access child PCB exclusively
         let exit_code = child.inner_exclusive_access().exit_code;
         // ++++ release child PCB
+        // 将exit_code保存在exit_code_ptr中
         *translated_refmut(inner.memory_set.token(), exit_code_ptr) = exit_code;
         found_pid as isize
     } else {
+        // 如果存在满足条件的子进程，但还没有结束，则返回
         -2
     }
     // ---- release current PCB automatically

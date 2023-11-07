@@ -35,7 +35,7 @@ impl Processor {
         &mut self.idle_task_cx as *mut _
     }
 
-    ///Get current task in moving semanteme
+    ///Get current task in moving semanteme，这会使self.current变为None
     pub fn take_current(&mut self) -> Option<Arc<TaskControlBlock>> {
         self.current.take()
     }
@@ -52,10 +52,11 @@ lazy_static! {
 
 ///The main part of process execution and scheduling
 ///Loop `fetch_task` to get the process that needs to run, and switch the process through `__switch`
+//启动第一个任务，以及切换任务时寻找任务
 pub fn run_tasks() {
     loop {
         let mut processor = PROCESSOR.exclusive_access();
-        if let Some(task) = fetch_task() {
+        if let Some(task) = fetch_task() { // Arc用于实现一个数据多个所有者
             let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
             // access coming task TCB exclusively
             let mut task_inner = task.inner_exclusive_access();
@@ -106,6 +107,8 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
     drop(processor);
     unsafe {
+        // 当切换回idle task后，会回到run_tasks的循环中，继续寻找下一个可调度的任务
+        // 当任务重新调度时，会从__switch的下一条指令执行，即从schedule返回
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
 }

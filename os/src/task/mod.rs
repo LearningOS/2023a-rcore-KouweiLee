@@ -83,6 +83,7 @@ pub fn exit_current_and_run_next(exit_code: i32) {
     {
         let mut initproc_inner = INITPROC.inner_exclusive_access();
         for child in inner.children.iter() {
+            // 将exit task的所有children赋给initproc
             child.inner_exclusive_access().parent = Some(Arc::downgrade(&INITPROC));
             initproc_inner.children.push(child.clone());
         }
