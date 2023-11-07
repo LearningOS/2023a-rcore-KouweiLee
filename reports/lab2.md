@@ -1,5 +1,13 @@
 # lab2-李国玮
 
+## 编程作业
+
+首先对于lab1的两个函数，难点在于当数据对象横跨一页时的情况。我通过`translated_byte_buffer`函数获得TimeVal和TaskInfo的字节切片形式，然后将数据按u8复制进去，具体实现可见`copy_kernel_data`函数。
+
+mmap只需要构造MapArea然后通过insert_framed_area将其插入到进程的地址空间即可。难点主要在于错误处理。
+
+munmap则较为简单，找到对应的area并从地址空间中移除即可。
+
 ## 问答作业
 
 ### 1

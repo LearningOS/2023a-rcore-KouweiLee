@@ -74,6 +74,8 @@ pub struct TaskControlBlockInner {
     /// The first execute time(ms) of this task
     pub first_execute_time: usize,
     pub is_started: bool,
+    pub stride: usize,
+    pub priority: usize, 
 }
 
 impl TaskControlBlockInner {
@@ -127,6 +129,8 @@ impl TaskControlBlock {
                     syscall_times: [0; MAX_SYSCALL_NUM],
                     first_execute_time: 0,
                     is_started: false,
+                    stride: 0,
+                    priority: 16,
                 })
             },
         };
@@ -203,6 +207,8 @@ impl TaskControlBlock {
                     syscall_times: [0; MAX_SYSCALL_NUM],
                     first_execute_time: 0,
                     is_started: false,
+                    stride: 0,
+                    priority: 16,
                 })
             },
         });

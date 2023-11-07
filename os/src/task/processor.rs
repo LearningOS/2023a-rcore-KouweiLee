@@ -116,16 +116,19 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
 }
 
 pub fn get_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
-    let inner = current_task().unwrap().inner_exclusive_access();
+    let current_task = current_task().unwrap();
+    let inner = current_task.inner_exclusive_access();
     inner.syscall_times
 }
 
 pub fn set_syscall_time(sys_id: usize) {
-    let mut inner = current_task().unwrap().inner_exclusive_access();
+    let current_task = current_task().unwrap();
+    let mut inner = current_task.inner_exclusive_access();
     inner.syscall_times[sys_id] += 1;
 }
 
 pub fn get_first_execute_time() -> usize {
-    let mut inner = current_task().unwrap().inner_exclusive_access();
+    let current_task = current_task().unwrap();
+    let inner = current_task.inner_exclusive_access();
     inner.first_execute_time
 }
