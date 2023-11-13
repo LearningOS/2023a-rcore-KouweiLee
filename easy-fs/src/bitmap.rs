@@ -13,7 +13,10 @@ pub struct Bitmap {
     blocks: usize,
 }
 
-/// Decompose bits into (block_pos, bits64_pos, inner_pos)
+/// Decompose bits into (block_pos, bits64_pos, inner_pos) \
+/// block_pos: 第几个block \
+/// bits64_pos: 第几个u64 \
+/// inner_pos： u64中的第几个bit
 fn decomposition(mut bit: usize) -> (usize, usize, usize) {
     let block_pos = bit / BLOCK_BITS;
     bit %= BLOCK_BITS;

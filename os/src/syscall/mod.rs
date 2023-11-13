@@ -54,11 +54,15 @@ const SYSCALL_TASK_INFO: usize = 410;
 mod fs;
 mod process;
 
+use core::mem::size_of;
+use core::slice::from_raw_parts;
+
 use fs::*;
 use process::*;
 
 use crate::fs::Stat;
-use crate::task::set_syscall_time;
+use crate::mm::translated_byte_buffer;
+use crate::task::{set_syscall_time, current_user_token};
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 4]) -> isize {
     set_syscall_time(syscall_id);
@@ -84,5 +88,17 @@ pub fn syscall(syscall_id: usize, args: [usize; 4]) -> isize {
         SYSCALL_SPAWN => sys_spawn(args[0] as *const u8),
         SYSCALL_SET_PRIORITY => sys_set_priority(args[0] as isize),
         _ => panic!("Unsupported syscall_id: {}", syscall_id),
+    }
+}
+
+
+fn copy_kernel_data<T>(from: *const T, to: *mut T) {
+    let from_buf = unsafe { from_raw_parts(from as *const u8, size_of::<T>()) };
+    let from_len = from_buf.len();
+    let mut start = 0;
+    let buffers = translated_byte_buffer(current_user_token(), to as *const u8, size_of::<T>());
+    for buf in buffers {
+        buf.copy_from_slice(&from_buf[start..from_len.min(buf.len())]);
+        start += buf.len();
     }
 }

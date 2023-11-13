@@ -1,16 +1,15 @@
 //! Process management syscalls
 //!
-use core::{slice::from_raw_parts, mem::size_of};
 use alloc::sync::Arc;
 
 use crate::{
     config::MAX_SYSCALL_NUM,
     fs::{open_file, OpenFlags},
-    mm::{translated_refmut, translated_str, VirtAddr, MapPermission, translated_byte_buffer},
+    mm::{translated_refmut, translated_str, VirtAddr, MapPermission},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next, TaskStatus,get_syscall_times, get_first_execute_time, TaskControlBlock,
-    }, timer::{get_time_ms, get_time_us},
+    }, timer::{get_time_ms, get_time_us}, syscall::copy_kernel_data,
 };
 
 #[repr(C)]
@@ -155,16 +154,6 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     0
 }
 
-fn copy_kernel_data<T>(from: *const T, to: *mut T) {
-    let from_buf = unsafe { from_raw_parts(from as *const u8, size_of::<T>()) };
-    let from_len = from_buf.len();
-    let mut start = 0;
-    let buffers = translated_byte_buffer(current_user_token(), to as *const u8, size_of::<T>());
-    for buf in buffers {
-        buf.copy_from_slice(&from_buf[start..from_len.min(buf.len())]);
-        start += buf.len();
-    }
-}
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
