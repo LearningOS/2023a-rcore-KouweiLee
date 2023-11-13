@@ -56,6 +56,7 @@ impl Hal for VirtioHal {
                 ppn_base = frame.ppn;
             }
             assert_eq!(frame.ppn.0, ppn_base.0 + i);
+            // 放到全局队列中，以避免被回收
             QUEUE_FRAMES.exclusive_access().push(frame);
         }
         let pa: PhysAddr = ppn_base.into();

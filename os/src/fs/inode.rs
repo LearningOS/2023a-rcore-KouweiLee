@@ -80,9 +80,9 @@ bitflags! {
         /// read and write
         const RDWR = 1 << 1;
         /// create new file
-        const CREATE = 1 << 9;
+        const CREATE = 1 << 9; // 如果该文件已经存在则应该将该文件的大小归零
         /// truncate file size to 0
-        const TRUNC = 1 << 10;
+        const TRUNC = 1 << 10; // 打开文件时清空文件内容
     }
 }
 

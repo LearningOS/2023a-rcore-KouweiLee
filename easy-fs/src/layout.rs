@@ -81,8 +81,9 @@ type DataBlock = [u8; BLOCK_SZ];
 /// A disk inode
 #[repr(C)]
 pub struct DiskInode {
+    /// file内容的大小
     pub size: u32,
-    pub direct: [u32; INODE_DIRECT_COUNT],
+    pub direct: [u32; INODE_DIRECT_COUNT], // 磁盘块的编号用u32
     pub indirect1: u32,
     pub indirect2: u32,
     type_: DiskInodeType,
@@ -107,7 +108,7 @@ impl DiskInode {
     pub fn is_file(&self) -> bool {
         self.type_ == DiskInodeType::File
     }
-    /// Return block number correspond to size.
+    /// 返回容纳size大小的数据，需要多少数据块
     pub fn data_blocks(&self) -> u32 {
         Self::_data_blocks(self.size)
     }
@@ -136,7 +137,7 @@ impl DiskInode {
         assert!(new_size >= self.size);
         Self::total_blocks(new_size) - Self::total_blocks(self.size)
     }
-    /// Get id of block given inner id
+    /// 获取该节点索引的第inner_id个磁盘的磁盘号
     pub fn get_block_id(&self, inner_id: u32, block_device: &Arc<dyn BlockDevice>) -> u32 {
         let inner_id = inner_id as usize;
         if inner_id < INODE_DIRECT_COUNT {
@@ -162,6 +163,8 @@ impl DiskInode {
         }
     }
     /// Inncrease the size of current disk inode
+    /// new_size：新的大小
+    /// new_blocks：磁盘块管理器已经分配好的、本次容量扩充需要的磁盘块编号数组
     pub fn increase_size(
         &mut self,
         new_size: u32,
@@ -309,6 +312,7 @@ impl DiskInode {
         v
     }
     /// Read data from current disk inode
+    /// 返回读取的总字节数
     pub fn read_at(
         &self,
         offset: usize,
@@ -323,7 +327,7 @@ impl DiskInode {
         let mut start_block = start / BLOCK_SZ;
         let mut read_size = 0usize;
         loop {
-            // calculate end of current block
+            // calculate end of current block，即当前块的最后一个字节相对于inode开头的偏移量
             let mut end_current_block = (start / BLOCK_SZ + 1) * BLOCK_SZ;
             end_current_block = end_current_block.min(end);
             // read and update read size
@@ -392,6 +396,7 @@ impl DiskInode {
 #[repr(C)]
 pub struct DirEntry {
     name: [u8; NAME_LENGTH_LIMIT + 1],
+    /// 目录项指向的inode number
     inode_id: u32,
 }
 /// Size of a directory entry

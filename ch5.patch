@@ -1,0 +1,919 @@
+diff --git a/os/src/main.rs b/os/src/main.rs
+index ccac0c1..de04bfc 100644
+--- a/os/src/main.rs
++++ b/os/src/main.rs
+@@ -17,7 +17,7 @@
+ //! We then call [`task::run_tasks()`] and for the first time go to
+ //! userspace.
+ 
+-#![deny(missing_docs)]
++// #![deny(missing_docs)]
+ #![deny(warnings)]
+ #![no_std]
+ #![no_main]
+diff --git a/os/src/mm/memory_set.rs b/os/src/mm/memory_set.rs
+index c3d15f3..e5fe808 100644
+--- a/os/src/mm/memory_set.rs
++++ b/os/src/mm/memory_set.rs
+@@ -48,17 +48,38 @@ impl MemorySet {
+     pub fn token(&self) -> usize {
+         self.page_table.token()
+     }
++    pub fn unmap_area(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> Result<(), ()> {
++        let start_vpn = start_va.floor();
++        let end_vpn = end_va.ceil();
++        let area = self.areas
++        .iter_mut()
++        .enumerate()
++        .find(|(_, a)| a.vpn_range.get_start() == start_vpn && a.vpn_range.get_end() == end_vpn)
++        .ok_or(())?;
++        area.1.unmap(&mut self.page_table);
++        let idx = area.0;
++        self.areas.remove(idx);
++        Ok(())
++    }
+     /// Assume that no conflicts.
+     pub fn insert_framed_area(
+         &mut self,
+         start_va: VirtAddr,
+         end_va: VirtAddr,
+         permission: MapPermission,
+-    ) {
++    ) -> Result<(), ()>{
++        let area = MapArea::new(start_va, end_va, MapType::Framed, permission);
++        for a in &self.areas {
++            if a.is_overlap(&area) {
++                // error!("area is overlapped, a is {:?},{:?}; area is {:?}, {:?};", a.vpn_range.get_start(), a.vpn_range.get_end(), area.vpn_range.get_start(), area.vpn_range.get_end());
++                return Err(());
++            }
++        }
+         self.push(
+-            MapArea::new(start_va, end_va, MapType::Framed, permission),
++            area,
+             None,
+-        );
++        )?;
++        Ok(())
+     }
+     /// remove a area
+     pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
+@@ -75,12 +96,13 @@ impl MemorySet {
+     /// Add a new MapArea into this MemorySet.
+     /// Assuming that there are no conflicts in the virtual address
+     /// space.
+-    fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
+-        map_area.map(&mut self.page_table);
++    fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) -> Result<(), ()>{
++        map_area.map(&mut self.page_table)?;
+         if let Some(data) = data {
+             map_area.copy_data(&mut self.page_table, data);
+         }
+         self.areas.push(map_area);
++        Ok(())
+     }
+     /// Mention that trampoline is not collected by areas.
+     fn map_trampoline(&mut self) {
+@@ -112,7 +134,7 @@ impl MemorySet {
+                 MapPermission::R | MapPermission::X,
+             ),
+             None,
+-        );
++        ).unwrap();
+         info!("mapping .rodata section");
+         memory_set.push(
+             MapArea::new(
+@@ -122,7 +144,7 @@ impl MemorySet {
+                 MapPermission::R,
+             ),
+             None,
+-        );
++        ).unwrap();
+         info!("mapping .data section");
+         memory_set.push(
+             MapArea::new(
+@@ -132,7 +154,7 @@ impl MemorySet {
+                 MapPermission::R | MapPermission::W,
+             ),
+             None,
+-        );
++        ).unwrap();
+         info!("mapping .bss section");
+         memory_set.push(
+             MapArea::new(
+@@ -142,7 +164,7 @@ impl MemorySet {
+                 MapPermission::R | MapPermission::W,
+             ),
+             None,
+-        );
++        ).unwrap();
+         info!("mapping physical memory");
+         memory_set.push(
+             MapArea::new(
+@@ -152,7 +174,7 @@ impl MemorySet {
+                 MapPermission::R | MapPermission::W,
+             ),
+             None,
+-        );
++        ).unwrap();
+         memory_set
+     }
+     /// Include sections in elf and trampoline and TrapContext and user stack,
+@@ -189,7 +211,7 @@ impl MemorySet {
+                 memory_set.push(
+                     map_area,
+                     Some(&elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize]),
+-                );
++                ).unwrap();
+             }
+         }
+         // map user stack with U flags
+@@ -206,7 +228,7 @@ impl MemorySet {
+                 MapPermission::R | MapPermission::W | MapPermission::U,
+             ),
+             None,
+-        );
++        ).unwrap();
+         // used in sbrk
+         memory_set.push(
+             MapArea::new(
+@@ -216,7 +238,7 @@ impl MemorySet {
+                 MapPermission::R | MapPermission::W | MapPermission::U,
+             ),
+             None,
+-        );
++        ).unwrap();
+         // map TrapContext
+         memory_set.push(
+             MapArea::new(
+@@ -226,7 +248,7 @@ impl MemorySet {
+                 MapPermission::R | MapPermission::W,
+             ),
+             None,
+-        );
++        ).unwrap();
+         (
+             memory_set,
+             user_stack_top,
+@@ -241,7 +263,7 @@ impl MemorySet {
+         // copy data sections/trap_context/user_stack
+         for area in user_space.areas.iter() {
+             let new_area = MapArea::from_another(area);
+-            memory_set.push(new_area, None);
++            memory_set.push(new_area, None).unwrap();
+             // copy data from another space
+             for vpn in area.vpn_range {
+                 let src_ppn = user_space.translate(vpn).unwrap().ppn();
+@@ -333,20 +355,22 @@ impl MapArea {
+             map_perm: another.map_perm,
+         }
+     }
+-    pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
++    /// map vpn to a ppn, and record the mapping to page_table
++    pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) -> Result<(), ()>{
+         let ppn: PhysPageNum;
+         match self.map_type {
+             MapType::Identical => {
+                 ppn = PhysPageNum(vpn.0);
+             }
+             MapType::Framed => {
+-                let frame = frame_alloc().unwrap();
++                let frame = frame_alloc().ok_or(())?;
+                 ppn = frame.ppn;
+                 self.data_frames.insert(vpn, frame);
+             }
+         }
+         let pte_flags = PTEFlags::from_bits(self.map_perm.bits).unwrap();
+         page_table.map(vpn, ppn, pte_flags);
++        Ok(())
+     }
+     pub fn unmap_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
+         if self.map_type == MapType::Framed {
+@@ -354,10 +378,11 @@ impl MapArea {
+         }
+         page_table.unmap(vpn);
+     }
+-    pub fn map(&mut self, page_table: &mut PageTable) {
++    pub fn map(&mut self, page_table: &mut PageTable) -> Result<(), ()>{
+         for vpn in self.vpn_range {
+-            self.map_one(page_table, vpn);
++            self.map_one(page_table, vpn)?;
+         }
++        Ok(())
+     }
+     pub fn unmap(&mut self, page_table: &mut PageTable) {
+         for vpn in self.vpn_range {
+@@ -374,7 +399,7 @@ impl MapArea {
+     #[allow(unused)]
+     pub fn append_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
+         for vpn in VPNRange::new(self.vpn_range.get_end(), new_end) {
+-            self.map_one(page_table, vpn)
++            self.map_one(page_table, vpn).unwrap()
+         }
+         self.vpn_range = VPNRange::new(self.vpn_range.get_start(), new_end);
+     }
+@@ -400,6 +425,13 @@ impl MapArea {
+             current_vpn.step();
+         }
+     }
++    pub fn is_overlap(&self, other: &Self) -> bool{
++        if self.vpn_range.get_start() >= other.vpn_range.get_end() ||
++            self.vpn_range.get_end() <= other.vpn_range.get_start() {
++                return false;
++        } 
++        true
++    }
+ }
+ 
+ #[derive(Copy, Clone, PartialEq, Debug)]
+diff --git a/os/src/mm/page_table.rs b/os/src/mm/page_table.rs
+index 47917e7..1ec4bba 100644
+--- a/os/src/mm/page_table.rs
++++ b/os/src/mm/page_table.rs
+@@ -189,6 +189,7 @@ pub fn translated_str(token: usize, ptr: *const u8) -> String {
+     let mut string = String::new();
+     let mut va = ptr as usize;
+     loop {
++        // 必须逐字节，因为ptr可能是跨物理页面的
+         let ch: u8 = *(page_table
+             .translate_va(VirtAddr::from(va))
+             .unwrap()
+diff --git a/os/src/syscall/mod.rs b/os/src/syscall/mod.rs
+index 8e0a7dd..8d8ba60 100644
+--- a/os/src/syscall/mod.rs
++++ b/os/src/syscall/mod.rs
+@@ -45,8 +45,11 @@ mod process;
+ 
+ use fs::*;
+ use process::*;
++
++use crate::task::set_syscall_time;
+ /// handle syscall exception with `syscall_id` and other arguments
+ pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
++    set_syscall_time(syscall_id);
+     match syscall_id {
+         SYSCALL_READ => sys_read(args[0], args[1] as *const u8, args[2]),
+         SYSCALL_WRITE => sys_write(args[0], args[1] as *const u8, args[2]),
+diff --git a/os/src/syscall/process.rs b/os/src/syscall/process.rs
+index f7aa9c3..d4c65be 100644
+--- a/os/src/syscall/process.rs
++++ b/os/src/syscall/process.rs
+@@ -1,14 +1,16 @@
+ //! Process management syscalls
++use core::{slice::from_raw_parts, mem::size_of};
++
+ use alloc::sync::Arc;
+ 
+ use crate::{
+     config::MAX_SYSCALL_NUM,
+     loader::get_app_data_by_name,
+-    mm::{translated_refmut, translated_str},
++    mm::{translated_refmut, translated_str, VirtAddr, MapPermission, translated_byte_buffer},
+     task::{
+         add_task, current_task, current_user_token, exit_current_and_run_next,
+-        suspend_current_and_run_next, TaskStatus,
+-    },
++        suspend_current_and_run_next, TaskStatus, get_syscall_times, get_first_execute_time, TaskControlBlock,
++    }, timer::{get_time_ms, get_time_us},
+ };
+ 
+ #[repr(C)]
+@@ -47,6 +49,29 @@ pub fn sys_getpid() -> isize {
+     trace!("kernel: sys_getpid pid:{}", current_task().unwrap().pid.0);
+     current_task().unwrap().pid.0 as isize
+ }
++/// YOUR JOB: Implement spawn.
++/// HINT: fork + exec =/= spawn
++/// 功能：新建子进程，使其执行目标程序。
++/// 说明：成功返回子进程id，否则返回 -1。
++pub fn sys_spawn(path: *const u8) -> isize {
++    trace!(
++        "kernel:pid[{}] sys_spawn",
++        current_task().unwrap().pid.0
++    );
++    let token = current_user_token();
++    let path = translated_str(token, path);
++    if let Some(data) = get_app_data_by_name(path.as_str()) {
++        let current_task = current_task().unwrap();
++        let new_task = Arc::new(TaskControlBlock::new(data));  
++        let new_task_id = new_task.getpid(); 
++        new_task.inner_exclusive_access().parent = Some(Arc::downgrade(&current_task));
++        current_task.inner_exclusive_access().children.push(new_task.clone());
++        add_task(new_task);
++        new_task_id as isize
++    } else {
++        return -1;
++    }
++}
+ 
+ pub fn sys_fork() -> isize {
+     trace!("kernel:pid[{}] sys_fork", current_task().unwrap().pid.0);
+@@ -78,6 +103,8 @@ pub fn sys_exec(path: *const u8) -> isize {
+ 
+ /// If there is not a child process whose pid is same as given, return -1.
+ /// Else if there is a child process but it is still running, return -2.
++// pid: 要等待的子进程pid，如果为-1,则表示任意一个子进程
++// 该函数立即返回
+ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
+     trace!("kernel::pid[{}] sys_waitpid [{}]", current_task().unwrap().pid.0, pid);
+     let task = current_task().unwrap();
+@@ -106,9 +133,11 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
+         // ++++ temporarily access child PCB exclusively
+         let exit_code = child.inner_exclusive_access().exit_code;
+         // ++++ release child PCB
++        // 将exit_code保存在exit_code_ptr中
+         *translated_refmut(inner.memory_set.token(), exit_code_ptr) = exit_code;
+         found_pid as isize
+     } else {
++        // 如果存在满足条件的子进程，但还没有结束，则返回
+         -2
+     }
+     // ---- release current PCB automatically
+@@ -117,41 +146,99 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
+ /// YOUR JOB: get time with second and microsecond
+ /// HINT: You might reimplement it with virtual memory management.
+ /// HINT: What if [`TimeVal`] is splitted by two pages ?
+-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+-    trace!(
+-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
+-        current_task().unwrap().pid.0
+-    );
+-    -1
++pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
++    trace!("kernel: sys_get_time");
++    let us = get_time_us();
++    let t = TimeVal {
++        sec: us / 1_000_000,
++        usec: us % 1_000_000,
++    };
++    copy_kernel_data(&t as *const TimeVal, ts);
++    0
++}
++
++fn copy_kernel_data<T>(from: *const T, to: *mut T) {
++    let from_buf = unsafe { from_raw_parts(from as *const u8, size_of::<T>()) };
++    let from_len = from_buf.len();
++    let mut start = 0;
++    let buffers = translated_byte_buffer(current_user_token(), to as *const u8, size_of::<T>());
++    for buf in buffers {
++        buf.copy_from_slice(&from_buf[start..from_len.min(buf.len())]);
++        start += buf.len();
++    }
+ }
+ 
+ /// YOUR JOB: Finish sys_task_info to pass testcases
+ /// HINT: You might reimplement it with virtual memory management.
+ /// HINT: What if [`TaskInfo`] is splitted by two pages ?
+-pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
+-    trace!(
+-        "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
+-        current_task().unwrap().pid.0
+-    );
+-    -1
++pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
++    trace!("kernel: sys_task_info");
++    let task_info = TaskInfo {
++        status: TaskStatus::Running,
++        syscall_times: get_syscall_times(),
++        time: get_time_ms() - get_first_execute_time(),
++    };
++    copy_kernel_data(&task_info as *const TaskInfo, ti);
++    0
+ }
+ 
+-/// YOUR JOB: Implement mmap.
+-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
+-    trace!(
+-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
+-        current_task().unwrap().pid.0
+-    );
+-    -1
++// YOUR JOB: Implement mmap.
++pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
++    trace!("kernel: sys_mmap");
++    if VirtAddr::from(start).page_offset() != 0 {
++        // error!("start is not aligned");
++        return -1;
++    }
++    if port & !0x7 != 0 || port & 0x7 == 0 {
++        // error!("port is error");
++        return -1;
++    } 
++    let mut map_permission = MapPermission::U;
++    if port & 0b1 != 0{
++        map_permission.insert(MapPermission::R);
++    }
++    if port & 0b10 != 0{
++        map_permission.insert(MapPermission::W);
++    }
++    if port & 0b100 != 0{
++        map_permission.insert(MapPermission::X);
++    }     
++    if len == 0 {
++        return 0;
++    }
++    let result = current_task()
++        .unwrap()
++        .inner_exclusive_access()
++        .memory_set
++        .insert_framed_area(
++            start.into(),
++            (start + len).into(),
++            map_permission,
++        );
++    if result.is_err() {
++        return -1;
++    }
++    0
+ }
+ 
+-/// YOUR JOB: Implement munmap.
+-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
+-    trace!(
+-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
+-        current_task().unwrap().pid.0
+-    );
+-    -1
++// YOUR JOB: Implement munmap.
++pub fn sys_munmap(start: usize, len: usize) -> isize {
++    trace!("kernel: sys_munmap");
++    if VirtAddr::from(start).page_offset() != 0 {
++        return -1;
++    }
++    if len == 0 {
++        return 0;
++    }
++    let result = current_task()
++        .unwrap()
++        .inner_exclusive_access()
++        .memory_set
++        .unmap_area(start.into(), (start + len).into());
++    if result.is_err() {
++        return -1;
++    }
++    0
+ }
+ 
+ /// change data segment size
+@@ -164,21 +251,16 @@ pub fn sys_sbrk(size: i32) -> isize {
+     }
+ }
+ 
+-/// YOUR JOB: Implement spawn.
+-/// HINT: fork + exec =/= spawn
+-pub fn sys_spawn(_path: *const u8) -> isize {
+-    trace!(
+-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
+-        current_task().unwrap().pid.0
+-    );
+-    -1
+-}
+ 
+ // YOUR JOB: Set task priority.
+-pub fn sys_set_priority(_prio: isize) -> isize {
++pub fn sys_set_priority(prio: isize) -> isize {
+     trace!(
+-        "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
++        "kernel:pid[{}] sys_set_priority",
+         current_task().unwrap().pid.0
+     );
+-    -1
++    if prio < 2 {
++        return -1;
++    }
++    current_task().unwrap().inner_exclusive_access().priority = prio as usize;
++    prio
+ }
+diff --git a/os/src/task/id.rs b/os/src/task/id.rs
+index 5a67d4a..41694d5 100644
+--- a/os/src/task/id.rs
++++ b/os/src/task/id.rs
+@@ -70,6 +70,7 @@ pub fn kernel_stack_position(app_id: usize) -> (usize, usize) {
+ }
+ 
+ /// Kernel stack for a process(task)
++// 注意内核栈不是以进程标识符为标识的，而是通过kstack_alloc分配的
+ pub struct KernelStack(pub usize);
+ 
+ /// allocate a new kernel stack
+@@ -80,7 +81,7 @@ pub fn kstack_alloc() -> KernelStack {
+         kstack_bottom.into(),
+         kstack_top.into(),
+         MapPermission::R | MapPermission::W,
+-    );
++    ).unwrap();
+     KernelStack(kstack_id)
+ }
+ 
+diff --git a/os/src/task/manager.rs b/os/src/task/manager.rs
+index 99393a4..7356f18 100644
+--- a/os/src/task/manager.rs
++++ b/os/src/task/manager.rs
+@@ -1,5 +1,6 @@
+ //!Implementation of [`TaskManager`]
+-use super::TaskControlBlock;
++use super::{TaskControlBlock, TaskStatus};
++use crate::config::BIG_STRIDE;
+ use crate::sync::UPSafeCell;
+ use alloc::collections::VecDeque;
+ use alloc::sync::Arc;
+@@ -23,7 +24,25 @@ impl TaskManager {
+     }
+     /// Take a process out of the ready queue
+     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
+-        self.ready_queue.pop_front()
++        let mut stride_min = usize::MAX;
++        let mut idx_min = usize::MAX;
++        for (idx, task) in self.ready_queue.iter().enumerate() {
++            let task_inner = task.inner_exclusive_access();
++            if task_inner.task_status == TaskStatus::Ready && task_inner.stride < stride_min {
++                stride_min = task_inner.stride;
++                idx_min = idx;
++            }
++        }
++        if idx_min == usize::MAX {
++            None
++        } else {
++            let task = self.ready_queue.remove(idx_min).unwrap();
++            let mut task_inner = task.inner_exclusive_access();
++            let pass = BIG_STRIDE / task_inner.priority;
++            task_inner.stride += pass; 
++            drop(task_inner);
++            Some(task)
++        }
+     }
+ }
+ 
+diff --git a/os/src/task/mod.rs b/os/src/task/mod.rs
+index 283fa29..e8f317e 100644
+--- a/os/src/task/mod.rs
++++ b/os/src/task/mod.rs
+@@ -33,7 +33,7 @@ pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
+ pub use manager::add_task;
+ pub use processor::{
+     current_task, current_trap_cx, current_user_token, run_tasks, schedule, take_current_task,
+-    Processor,
++    Processor, set_syscall_time, get_syscall_times, get_first_execute_time
+ };
+ /// Suspend the current 'Running' task and run the next task in task list.
+ pub fn suspend_current_and_run_next() {
+@@ -83,6 +83,7 @@ pub fn exit_current_and_run_next(exit_code: i32) {
+     {
+         let mut initproc_inner = INITPROC.inner_exclusive_access();
+         for child in inner.children.iter() {
++            // 将exit task的所有children赋给initproc
+             child.inner_exclusive_access().parent = Some(Arc::downgrade(&INITPROC));
+             initproc_inner.children.push(child.clone());
+         }
+diff --git a/os/src/task/processor.rs b/os/src/task/processor.rs
+index f05fa09..36dfb75 100644
+--- a/os/src/task/processor.rs
++++ b/os/src/task/processor.rs
+@@ -7,6 +7,7 @@
+ use super::__switch;
+ use super::{fetch_task, TaskStatus};
+ use super::{TaskContext, TaskControlBlock};
++use crate::config::MAX_SYSCALL_NUM;
+ use crate::sync::UPSafeCell;
+ use crate::trap::TrapContext;
+ use alloc::sync::Arc;
+@@ -35,7 +36,7 @@ impl Processor {
+         &mut self.idle_task_cx as *mut _
+     }
+ 
+-    ///Get current task in moving semanteme
++    ///Get current task in moving semanteme，这会使self.current变为None
+     pub fn take_current(&mut self) -> Option<Arc<TaskControlBlock>> {
+         self.current.take()
+     }
+@@ -44,6 +45,7 @@ impl Processor {
+     pub fn current(&self) -> Option<Arc<TaskControlBlock>> {
+         self.current.as_ref().map(Arc::clone)
+     }
++
+ }
+ 
+ lazy_static! {
+@@ -52,10 +54,11 @@ lazy_static! {
+ 
+ ///The main part of process execution and scheduling
+ ///Loop `fetch_task` to get the process that needs to run, and switch the process through `__switch`
++//启动第一个任务，以及切换任务时寻找任务
+ pub fn run_tasks() {
+     loop {
+         let mut processor = PROCESSOR.exclusive_access();
+-        if let Some(task) = fetch_task() {
++        if let Some(task) = fetch_task() { // Arc用于实现一个数据多个所有者
+             let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
+             // access coming task TCB exclusively
+             let mut task_inner = task.inner_exclusive_access();
+@@ -106,6 +109,26 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
+     let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
+     drop(processor);
+     unsafe {
++        // 当切换回idle task后，会回到run_tasks的循环中，继续寻找下一个可调度的任务
++        // 当任务重新调度时，会从__switch的下一条指令执行，即从schedule返回
+         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
+     }
+ }
++
++pub fn get_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
++    let current_task = current_task().unwrap();
++    let inner = current_task.inner_exclusive_access();
++    inner.syscall_times
++}
++
++pub fn set_syscall_time(sys_id: usize) {
++    let current_task = current_task().unwrap();
++    let mut inner = current_task.inner_exclusive_access();
++    inner.syscall_times[sys_id] += 1;
++}
++
++pub fn get_first_execute_time() -> usize {
++    let current_task = current_task().unwrap();
++    let inner = current_task.inner_exclusive_access();
++    inner.first_execute_time
++}
+\ No newline at end of file
+diff --git a/os/src/task/task.rs b/os/src/task/task.rs
+index 1402c31..88acbd2 100644
+--- a/os/src/task/task.rs
++++ b/os/src/task/task.rs
+@@ -1,7 +1,7 @@
+ //! Types related to task management & Functions for completely changing TCB
+ use super::TaskContext;
+ use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
+-use crate::config::TRAP_CONTEXT_BASE;
++use crate::config::{TRAP_CONTEXT_BASE, MAX_SYSCALL_NUM};
+ use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
+ use crate::sync::UPSafeCell;
+ use crate::trap::{trap_handler, TrapContext};
+@@ -34,6 +34,7 @@ impl TaskControlBlock {
+         let inner = self.inner_exclusive_access();
+         inner.memory_set.token()
+     }
++    
+ }
+ 
+ pub struct TaskControlBlockInner {
+@@ -68,6 +69,13 @@ pub struct TaskControlBlockInner {
+ 
+     /// Program break
+     pub program_brk: usize,
++    /// The called times of each syscall
++    pub syscall_times: [u32; MAX_SYSCALL_NUM],
++    /// The first execute time(ms) of this task
++    pub first_execute_time: usize,
++    pub is_started: bool,
++    pub stride: usize,
++    pub priority: usize, 
+ }
+ 
+ impl TaskControlBlockInner {
+@@ -109,7 +117,7 @@ impl TaskControlBlock {
+             inner: unsafe {
+                 UPSafeCell::new(TaskControlBlockInner {
+                     trap_cx_ppn,
+-                    base_size: user_sp,
++                    base_size: user_sp, // 用户栈栈顶
+                     task_cx: TaskContext::goto_trap_return(kernel_stack_top),
+                     task_status: TaskStatus::Ready,
+                     memory_set,
+@@ -118,6 +126,11 @@ impl TaskControlBlock {
+                     exit_code: 0,
+                     heap_bottom: user_sp,
+                     program_brk: user_sp,
++                    syscall_times: [0; MAX_SYSCALL_NUM],
++                    first_execute_time: 0,
++                    is_started: false,
++                    stride: 0,
++                    priority: 16,
+                 })
+             },
+         };
+@@ -145,7 +158,7 @@ impl TaskControlBlock {
+         // **** access current TCB exclusively
+         let mut inner = self.inner_exclusive_access();
+         // substitute memory_set
+-        inner.memory_set = memory_set;
++        inner.memory_set = memory_set; // 原来的memory_set会被自动回收
+         // update trap_cx ppn
+         inner.trap_cx_ppn = trap_cx_ppn;
+         // initialize base_size
+@@ -191,6 +204,11 @@ impl TaskControlBlock {
+                     exit_code: 0,
+                     heap_bottom: parent_inner.heap_bottom,
+                     program_brk: parent_inner.program_brk,
++                    syscall_times: [0; MAX_SYSCALL_NUM],
++                    first_execute_time: 0,
++                    is_started: false,
++                    stride: 0,
++                    priority: 16,
+                 })
+             },
+         });
+diff --git a/os/src/trap/mod.rs b/os/src/trap/mod.rs
+index 78dd9f2..c40f83c 100644
+--- a/os/src/trap/mod.rs
++++ b/os/src/trap/mod.rs
+@@ -67,6 +67,7 @@ pub fn trap_handler() -> ! {
+             cx.sepc += 4;
+             // get system call return value
+             let result = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]);
++            // 由于TrapContext所在的物理页面发生了变化，故需要重新获取
+             // cx is changed during sys_exec, so we have to call it again
+             cx = current_trap_cx();
+             cx.x[10] = result as usize;
+diff --git a/reports/lab1.md b/reports/lab1.md
+new file mode 100644
+index 0000000..a190a93
+--- /dev/null
++++ b/reports/lab1.md
+@@ -0,0 +1,46 @@
++# lab1-李国玮
++
++## 编程作业
++
++为了实现对单个任务的执行信息跟踪，我首先修改了任务控制块TaskControlBlock，增加对系统调用次数和第一次被调用时间的记录。通过在TaskManager中增加相应的函数逻辑就可以将其暴露给系统调用模块。
++
++对于系统调用次数的记录，我在syscall函数的一开始就根据`syscall_id`对当前任务控制块中的系统调用次数数组进行修改。
++
++对于当前运行时间，我则通过使用`get_time_ms`函数获取。
++
++## 简答作业
++
++### 1
++
++在os目录下执行 `make run BASE=1 CHAPTER=2 LOG=ERROR`时，会执行ch2b开头的应用程序，可以观察到内核的报错依次为：
++
++```
++[kernel] PageFault in application, bad addr = 0x0, bad instruction = 0x804003c4, kernel killed it.
++[kernel] IllegalInstruction in application, kernel killed it.
++[kernel] IllegalInstruction in application, kernel killed it.
++```
++
++即访问0地址出错，执行非法指令出错。sbi为：
++
++```
++RustSBI version 0.3.0-alpha.2, adapting to RISC-V SBI v1.0.0
++```
++
++### 2
++
++1. 刚进入`__restore`时，`a0`代表内核栈栈顶。其两种使用场景分别是：
++   * 当系统调用返回到用户态时，restore上下文
++   * 当执行用户程序时，从S态变为U态，并初始化寄存器
++2. 特殊处理了sstatus、sepc、sscratch寄存器。sstatus指明了要返回U态、sepc指明了返回U态后取址地址、sscratch中则存放了用户栈栈顶
++3. x2为sp寄存器，在之后会和sscratch交换，得到真正的用户栈栈顶，现在恢复的值没有意义；x4为一个没用的寄存器，不需要恢复
++4. sp此时的值是用户栈栈顶，sscratch为内核栈栈顶
++5. sret发生状态切换。该指令会将CPU当前特权级按sstatus中的SPP字段进行设置。
++6. sp表示内核栈栈顶，sscratch表示用户栈栈顶
++7. ecall
++
++## 荣誉准则
++
++1. 在完成本次实验的过程（含此前学习的过程）中，我曾分别与 **无人** 就（与本次实验相关的）以下方面做过交流，还在代码中对应的位置以注释形式记录了具体的交流对象及内容。
++2. 此外，我也参考了 **无其他资料** ，还在代码中对应的位置以注释形式记录了具体的参考来源及内容
++3. 我独立完成了本次实验除以上方面之外的所有工作，包括代码与文档。 我清楚地知道，从以上方面获得的信息在一定程度上降低了实验难度，可能会影响起评分。
++4. 我从未使用过他人的代码，不管是原封不动地复制，还是经过了某些等价转换。 我未曾也不会向他人（含此后各届同学）复制或公开我的实验代码，我有义务妥善保管好它们。 我提交至本实验的评测系统的代码，均无意于破坏或妨碍任何计算机系统的正常运转。 我清楚地知道，以上情况均为本课程纪律所禁止，若违反，对应的实验成绩将按“-100”分计。
+\ No newline at end of file
+diff --git a/reports/lab2.md b/reports/lab2.md
+new file mode 100644
+index 0000000..d8728ed
+--- /dev/null
++++ b/reports/lab2.md
+@@ -0,0 +1,88 @@
++# lab2-李国玮
++
++## 编程作业
++
++首先对于lab1的两个函数，难点在于当数据对象横跨一页时的情况。我通过`translated_byte_buffer`函数获得TimeVal和TaskInfo的字节切片形式，然后将数据按u8复制进去，具体实现可见`copy_kernel_data`函数。
++
++mmap只需要构造MapArea然后通过insert_framed_area将其插入到进程的地址空间即可。难点主要在于错误处理。
++
++munmap则较为简单，找到对应的area并从地址空间中移除即可。
++
++## 问答作业
++
++### 1
++
++![../_images/sv39-pte.png](https://learningos.cn/rCore-Tutorial-Guide-2023A/_images/sv39-pte.png)
++
++63-54位：保留
++
++53-10位：物理页号，分为3级页表
++
++9-8位：RSW，Reserved for Software。 用于预留给软件做自定义页表功能的位。
++
++D：dirty，表示该页表项对应的虚拟页表时候被修改过
++
++A：access，虚拟页面是否被访问过
++
++G：global，如果为1,则所有页表都包含这一项
++
++U：该页表项对应的虚拟页面是否允许U特权级访问
++
++RWX：该虚拟页面是否允许读、写、可执行
++
++V：valid，只有为1时才合法。
++
++### 2
++
++* 哪些异常可能是缺页导致的？
++
++要访问的虚拟地址尚未建立地址映射关系
++
++要访问的虚拟页面对应的物理页面已经swap到磁盘上，内存中不存在
++
++用户态下访问内核态地址。
++
++* 发生缺页时，描述相关重要寄存器的值，上次实验描述过的可以简略
++
++stval：记录产生缺页的虚拟地址
++
++sepc：记录产生缺页的指令地址
++
++- 处理 10G 连续的内存页面，对应的 SV39 页表大致占用多少内存 (估算数量级即可)？
++
++SV39页表采用3级页表，每张页表为4KB，页表项64位即8B，故一个三级页表管理512*4=2MB内存，一个二级页表管理2MB\*512=1GB内存。故需要一个根页表和10个二级页表，以及5120个三级页表。共占内存约20MB。
++
++- 请简单思考如何才能实现 Lazy 策略，缺页时又如何处理？描述合理即可，不需要考虑实现。
++
++为页表项增加一个标志位，表示该页面是否在磁盘里。如果访问一个虚拟地址，发现对应的页面在磁盘中，则产生缺页异常并跳入一个异常处理函数，该函数会将磁盘中的页面调入内存并为页表增加地址映射关系。之后异常返回到访问这个虚拟地址的指令，该指令再次执行时就会访问到内存的数据了。
++
++* 页面失效如何体现在页表项
++
++增加一个标志位，表示该页面是否在磁盘里。
++
++### 3
++
++- 在单页表情况下，如何更换页表？
++
++在内核启动过程中，使能MMU后，内核需要首先建立一套页表a，维护内核的地址映射。当启动进程后，每个进程会拥有一个根页表b，且对于内核态所在的虚拟地址范围，其根页表会指向a中相同地址的所有二级页表。之后a的根页表就不再使用，当任务切换时，只需要切换进程的页表；而发生异常时，则不需要切换页表。
++
++- 单页表情况下，如何控制用户态无法访问内核页面？（tips:看看上一题最后一问）
++
++其实有2种方案，一种是在页表项中增加标志位，是否允许用户态读取。所有的内核页面对应的页表项都应该将该标志位置为不允许用户态读取。第二种方案是，由CPU硬件实现，对哪段虚拟地址只允许内核态访问，哪些属于用户态。
++
++- 单页表有何优势？（回答合理即可）
++
++实现起来简单，发生异常时不需要跳板页面
++
++* 双页表实现下，何时需要更换页表？假设你写一个单页表操作系统，你会选择何时更换页表（回答合理即可）？
++
++双页表下，发生异常和返回异常时都需要更换页表
++
++而单页表则只需要在任务切换时更换页表即可。
++
++## 荣誉准则
++
++1. 在完成本次实验的过程（含此前学习的过程）中，我曾分别与 **无人** 就（与本次实验相关的）以下方面做过交流，还在代码中对应的位置以注释形式记录了具体的交流对象及内容。
++2. 此外，我也参考了 **无其他资料** ，还在代码中对应的位置以注释形式记录了具体的参考来源及内容
++3. 我独立完成了本次实验除以上方面之外的所有工作，包括代码与文档。 我清楚地知道，从以上方面获得的信息在一定程度上降低了实验难度，可能会影响起评分。
++4. 我从未使用过他人的代码，不管是原封不动地复制，还是经过了某些等价转换。 我未曾也不会向他人（含此后各届同学）复制或公开我的实验代码，我有义务妥善保管好它们。 我提交至本实验的评测系统的代码，均无意于破坏或妨碍任何计算机系统的正常运转。 我清楚地知道，以上情况均为本课程纪律所禁止，若违反，对应的实验成绩将按“-100”分计。
+\ No newline at end of file
+diff --git a/reports/lab3.md b/reports/lab3.md
+new file mode 100644
+index 0000000..38c7209
+--- /dev/null
++++ b/reports/lab3.md
+@@ -0,0 +1,32 @@
++# lab3-李国玮
++
++## 编程作业
++
++本次作业较为简单，重用lab1和lab2的代码即可兼容之前实验，不需要改动。
++
++spawn函数的关键在于构造一个数据为指定路径文件的进程控制块，但其实`TaskControlBlock`的`new`函数已经实现了这个功能，只需要之后设置以下双方的parent和children即可。
++
++进程调度则主要修改`run_tasks`中的逻辑即可，因为每次进程切换时都会从用户进程先切换到内核的idle进程，再由idle进程执行`run_tasks`中的循环。故我修改了`fetch_task`函数，通过遍历ready_queue获得最小stride进程，并更新stride后调度即可。
++
++## 问答作业
++
++stride 算法原理非常简单，但是有一个比较大的问题。例如两个 pass = 10 的进程，使用 8bit 无符号整形储存 stride， p1.stride = 255, p2.stride = 250，在 p2 执行一个时间片后，理论上下一次应该 p1 执行。
++
++- 实际情况是轮到 p1 执行吗？为什么？
++
++**不是，p2的stride发生了溢出，8bit无符号整数可表示的数据范围为`[0..255]`，故p2的stride变为4.**
++
++*我们之前要求进程优先级 >= 2 其实就是为了解决这个问题。可以证明，* **在不考虑溢出的情况下** *, 在进程优先级全部 >= 2 的情况下，如果严格按照算法执行，那么 STRIDE_MAX – STRIDE_MIN <= BigStride / 2。* 
++
++- 为什么？尝试简单说明（不要求严格证明）。
++
++由pass的计算公式得P.pass = BigStride / P.priority，由于P.priority >= 2，故所有进程的pass <= BigStride / 2。初始时刻所有进程stride均为0, 故假设进程中最大的pass为pass_max，最小的pass为pass_min，则pass_max - pass_min <= BigStride/2
++
++* 下一问不大会了
++
++## 荣誉准则
++
++1. 在完成本次实验的过程（含此前学习的过程）中，我曾分别与 **无人** 就（与本次实验相关的）以下方面做过交流，还在代码中对应的位置以注释形式记录了具体的交流对象及内容。
++2. 此外，我也参考了 **无其他资料** ，还在代码中对应的位置以注释形式记录了具体的参考来源及内容
++3. 我独立完成了本次实验除以上方面之外的所有工作，包括代码与文档。 我清楚地知道，从以上方面获得的信息在一定程度上降低了实验难度，可能会影响起评分。
++4. 我从未使用过他人的代码，不管是原封不动地复制，还是经过了某些等价转换。 我未曾也不会向他人（含此后各届同学）复制或公开我的实验代码，我有义务妥善保管好它们。 我提交至本实验的评测系统的代码，均无意于破坏或妨碍任何计算机系统的正常运转。 我清楚地知道，以上情况均为本课程纪律所禁止，若违反，对应的实验成绩将按“-100”分计。
+\ No newline at end of file
+diff --git a/user b/user
+new file mode 160000
+index 0000000..1163ee6
+--- /dev/null
++++ b/user
+@@ -0,0 +1 @@
++Subproject commit 1163ee6e2ca11184b01d2f376f97c42288349c23

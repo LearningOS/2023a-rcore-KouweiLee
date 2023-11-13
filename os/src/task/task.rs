@@ -1,7 +1,7 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{TRAP_CONTEXT_BASE, MAX_SYSCALL_NUM};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
@@ -36,6 +36,7 @@ impl TaskControlBlock {
         let inner = self.inner_exclusive_access();
         inner.memory_set.token()
     }
+    
 }
 
 pub struct TaskControlBlockInner {
@@ -64,6 +65,7 @@ pub struct TaskControlBlockInner {
 
     /// It is set when active exit or execution error occurs
     pub exit_code: i32,
+    /// 文件描述符表，文件描述符则是该表的索引
     pub fd_table: Vec<Option<Arc<dyn File + Send + Sync>>>,
 
     /// Heap bottom
@@ -71,6 +73,13 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+    /// The called times of each syscall
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+    /// The first execute time(ms) of this task
+    pub first_execute_time: usize,
+    pub is_started: bool,
+    pub stride: usize,
+    pub priority: usize, 
 }
 
 impl TaskControlBlockInner {
@@ -118,7 +127,7 @@ impl TaskControlBlock {
             inner: unsafe {
                 UPSafeCell::new(TaskControlBlockInner {
                     trap_cx_ppn,
-                    base_size: user_sp,
+                    base_size: user_sp, // 用户栈栈顶
                     task_cx: TaskContext::goto_trap_return(kernel_stack_top),
                     task_status: TaskStatus::Ready,
                     memory_set,
@@ -135,6 +144,11 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    first_execute_time: 0,
+                    is_started: false,
+                    stride: 0,
+                    priority: 16,
                 })
             },
         };
@@ -216,6 +230,11 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    first_execute_time: 0,
+                    is_started: false,
+                    stride: 0,
+                    priority: 16,
                 })
             },
         });

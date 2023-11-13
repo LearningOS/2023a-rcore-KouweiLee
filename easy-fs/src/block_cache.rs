@@ -31,7 +31,7 @@ impl BlockCache {
     fn addr_of_offset(&self, offset: usize) -> usize {
         &self.cache[offset] as *const _ as usize
     }
-
+    /// 获取offset位置开始的结构体T的不可变引用
     pub fn get_ref<T>(&self, offset: usize) -> &T
     where
         T: Sized,
@@ -41,7 +41,7 @@ impl BlockCache {
         let addr = self.addr_of_offset(offset);
         unsafe { &*(addr as *const T) }
     }
-
+    /// 获取offset位置开始的结构体T的可变引用
     pub fn get_mut<T>(&mut self, offset: usize) -> &mut T
     where
         T: Sized,
@@ -52,11 +52,11 @@ impl BlockCache {
         let addr = self.addr_of_offset(offset);
         unsafe { &mut *(addr as *mut T) }
     }
-
+    /// 读取offset位置的结构体T，并传入函数f，返回值为类型V
     pub fn read<T, V>(&self, offset: usize, f: impl FnOnce(&T) -> V) -> V {
         f(self.get_ref(offset))
     }
-
+    /// 修改offset位置的结构体T，并传入函数f，返回值为类型V
     pub fn modify<T, V>(&mut self, offset: usize, f: impl FnOnce(&mut T) -> V) -> V {
         f(self.get_mut(offset))
     }

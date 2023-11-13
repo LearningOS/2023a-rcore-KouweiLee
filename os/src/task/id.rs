@@ -70,6 +70,7 @@ pub fn kernel_stack_position(app_id: usize) -> (usize, usize) {
 }
 
 /// Kernel stack for a process(task)
+// 注意内核栈不是以进程标识符为标识的，而是通过kstack_alloc分配的
 pub struct KernelStack(pub usize);
 
 /// allocate a new kernel stack
@@ -80,7 +81,7 @@ pub fn kstack_alloc() -> KernelStack {
         kstack_bottom.into(),
         kstack_top.into(),
         MapPermission::R | MapPermission::W,
-    );
+    ).unwrap();
     KernelStack(kstack_id)
 }
 
