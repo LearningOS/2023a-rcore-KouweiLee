@@ -89,6 +89,8 @@ pub fn sys_fstat(fd: usize, st: *mut Stat) -> isize {
     }
     let mut stat = Stat::new();
     if let Some(f) = &inner.fd_table[fd] {
+        let f = f.clone();
+        drop(inner);
         f.stat(&mut stat);
         copy_kernel_data(&stat as *const Stat, st);
         0

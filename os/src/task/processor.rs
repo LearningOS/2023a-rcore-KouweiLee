@@ -115,7 +115,7 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     }
 }
 
-pub fn get_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
+pub fn get_syscall_times() -> [usize; MAX_SYSCALL_NUM] {
     let current_task = current_task().unwrap();
     let inner = current_task.inner_exclusive_access();
     inner.syscall_times

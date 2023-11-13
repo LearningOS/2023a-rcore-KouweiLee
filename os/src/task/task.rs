@@ -74,7 +74,7 @@ pub struct TaskControlBlockInner {
     /// Program break
     pub program_brk: usize,
     /// The called times of each syscall
-    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+    pub syscall_times: [usize; MAX_SYSCALL_NUM],
     /// The first execute time(ms) of this task
     pub first_execute_time: usize,
     pub is_started: bool,

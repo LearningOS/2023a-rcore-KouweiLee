@@ -160,11 +160,14 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
     trace!("kernel: sys_task_info");
-    let task_info = TaskInfo {
+    let mut task_info = TaskInfo {
         status: TaskStatus::Running,
-        syscall_times: get_syscall_times(),
+        syscall_times: [0;MAX_SYSCALL_NUM],
         time: get_time_ms() - get_first_execute_time(),
     };
+    get_syscall_times().iter().enumerate().for_each(|t| {
+        task_info.syscall_times[t.0] = *t.1 as u32;
+    });
     copy_kernel_data(&task_info as *const TaskInfo, ti);
     0
 }

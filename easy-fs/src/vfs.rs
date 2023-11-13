@@ -131,28 +131,26 @@ impl Inode {
     }
     /// unlink path. 只有ROOT_INODE调用
     pub fn unlinkat(&self, path: &str) -> isize {
-        let mut success = false;
-        self.modify_disk_inode(|disk_inode| {
-            let file_count = (disk_inode.size as usize) / DIRENT_SZ;
+        if let Some(inode) = self.find(path) {
+            inode.set_nlink(-1);
+        } else {
+            return -1;
+        } 
+        self.modify_disk_inode(|root_inode| {
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
             let mut dirent = DirEntry::empty();
             for i in 0..file_count {
                 assert_eq!(
-                    disk_inode.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device,),
+                    root_inode.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device,),
                     DIRENT_SZ,
                 );
                 if dirent.name() == path {
                     let buf = [0; DIRENT_SZ];
-                    disk_inode.write_at(DIRENT_SZ * i, &buf, &self.block_device);
-                    success = true;
+                    root_inode.write_at(DIRENT_SZ * i, &buf, &self.block_device);
                 }
             }
         });
-        if success {
-            self.find(path).unwrap().set_nlink(-1);
-            0
-        } else {
-            -1
-        }
+        0
     }
 
     /// 只有ROOT_INODE才会调用
